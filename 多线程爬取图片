@@ -1,0 +1,131 @@
+import requests
+import threading
+import os
+import  time
+from bs4 import BeautifulSoup
+url_img = [] #图片地址
+url_all =[] #所有图集的地址
+page_url = [] #页面地址
+g_lock = threading.Lock() #锁
+def get_url_1(url):
+    #页面
+    #得到每个图集的地址
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Safari/537.36'}
+    try:
+        response = requests.get(url,headers=headers)
+        response.encoding ='GB2312'
+        soup = BeautifulSoup(response.text,'lxml')
+        hrefs = soup.find_all('a',target='_blank')
+        img = soup.find_all('img',width='165')
+        hrefs = ['https://www.xgmn5.com'+a['href'] for a in hrefs[1:]]#找到地址
+        title = [b['title'] for b in img]#找到标题
+        global url_all
+        #keyvauel=dict(zip(hrefs,title))#创建字典
+        #url_all.append(keyvauel)
+        for x,y in zip(hrefs,title):
+            url_all.append({x:y})
+    except:
+        print(response.status_code)
+#每个page的地址url
+class Producer_url(threading.Thread):
+    #得到页面地址
+    def run(self):
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Safari/537.36'
+        }
+        while len(url_all)>0:
+            g_lock.acquire()
+            url_p = url_all.pop().keys()
+            g_lock.release()
+            try:
+
+                response = requests.get(list(url_p)[0],headers=headers)
+                soup = BeautifulSoup(response.text,'lxml')
+                div = soup.find('div',class_='page')
+                pages =div.find_all('a')
+                for page in pages[:-1]:
+                    g_lock.acquire()
+                    page_url.append('https://www.xgmn5.com'+page['href'])
+                    #print("添加："+'https://www.xgmn5.com'+page['href'])
+                    g_lock.release()
+            except:
+                print("找不到页面")
+
+class Producer_img_url(threading.Thread):
+    #得到图片地址
+    def run(self):
+        print("图片地址获取线程启动")
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Safari/537.36'
+        }
+        while len(page_url)>0:
+        #for x in range(10):
+            try:
+                g_lock.acquire()
+                page = page_url.pop()
+                print("分析：" + page)
+                g_lock.release()
+                response = requests.get(page,headers=headers)
+                response.encoding = 'GB2312'
+                soup = BeautifulSoup(response.text,'lxml')
+                imgs = soup.find_all('img')[1:-1]
+                img_urls = ['https://www.xgmn5.com'+i['src'] for i in imgs[:-1]]
+                img_title = [t['alt'] for t in imgs]
+                for x,y in zip(img_title,img_urls):
+                    url_img.append({x:y})
+                    print("添加："+y)
+            except:
+                pass
+class DownPic(threading.Thread):
+    #下载图片
+    def run(self):
+        print("图片下载线程启动")
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Safari/537.36'
+        }
+        while True:
+            g_lock.acquire()
+            if len(url_img)==0:
+                g_lock.release()
+                continue
+            else:
+                img = url_img.pop().items()
+                g_lock.release()
+                path = list(img)[0][0]
+                is_exists = os.path.exists(path)
+                if not is_exists:
+                    os.makedirs(path)
+                    print(path+'目录创建成功')
+                else:
+                    pass
+                filename = path +"/"+ list(img)[0][1].split('/')[-1]
+                if os.path.exists(filename):
+                    continue
+                else:
+                    try:
+                        response = requests.get(list(img)[0][1],headers=headers)
+                        with open(filename,'wb') as f :
+                            f.write(response.content)
+                            print("打印成功")
+                    except:
+                        print("储存失败")
+if __name__ == '__main__':
+    urls = ['https://www.xgmn5.com/MiiTao/']
+    for x in range(2,8):
+        urls.append('https://www.xgmn5.com/MiiTao/page_%d.html'%x)
+    for url in urls:
+        get_url_1(url)#得到图集地址
+    threads = []
+    for x in range(10):
+        t = Producer_url()
+        t.start()
+        threads.append(t)
+    for tt in threads:
+            tt.join()
+    for x in range(5):
+        p = Producer_img_url()
+        p.start()
+    for x in range(5):
+         time.sleep(10)
+         f = DownPic()
+         f.start()
